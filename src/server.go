@@ -37,6 +37,7 @@ func getToken() []byte {
 }
 
 func ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("------event------");
 	fmt.Fprint(w, "Event.")
 	eventType, _, payload, ok, _ := gitee_utils.ValidateWebhook(w, r)
 	if !ok {
@@ -76,7 +77,7 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 	}
 	assignee := ""
 	strLabels := ""
-	orgOrigin := "mind_spore"
+	orgOrigin := "all_for_test"
 	labelsToAdd_str := ""
 	issueNum := i.Issue.Number
 	org := i.Repository.Namespace
@@ -101,6 +102,7 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 	if len(issueInit) == 0 {
 		res := c.CreateGiteeIssueComment(org, repo, issueNum, issueTemp)
 		if res != nil {
+			fmt.Println("-----CreateGiteeIssueComment-----")
 			fmt.Println(res.Error())
 			return
 		}
@@ -130,6 +132,8 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 		}
 		labelFindTi = getLabel(JsonByte, nameFindTi)
 
+		fmt.Printf("nameFindTi: %s \n", nameFindTi)
+		fmt.Printf("labelFindTi: %s \n", labelFindTi)
 		if len(labelFindTi) != 0 {
 			labelsToAdd = append(labelsToAdd, labelFindTi...)
 		}
@@ -160,6 +164,9 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 			labelsToAdd = append(labelsToAdd, "kind/bug", "stat/help-wanted")
 			break
 		}
+		
+		fmt.Println(issueMaker)
+		fmt.Println(orgOrigin)
 		assignee = getLabelAssignee(JsonByte, labelsToAdd)
 		if isUserInEnt(issueMaker, orgOrigin, c) {
 			assignee = issueMaker
@@ -169,13 +176,16 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 			assigneeStr = " @" + assignee + " "
 		}
 		labelsToAdd_str = strings.Join(labelsToAdd,",")
-		rese := c.AssignGiteeIssue(org, repo, labelsToAdd_str, issueNum, assignee)
+		fmt.Printf("assign to :%s \n", assignee)
+		fmt.Printf("labelsToAdd: %s \n", labelsToAdd_str)
+		rese := c.AssignGiteeIssue(org, repo, labelsToAdd_str, issueNum, "guoqiangqi1")
 		if rese != nil {
 			fmt.Println(rese.Error())
 			return
 		}
 
 		if len(labelFind) != 0 {
+			fmt.Printf("labelFind: %s \n", labelFind)
 			for _, strLabel := range labelFind {
 				strLabels = strLabels + "**//" + strLabel + "**" + "\n"
 			}
@@ -272,6 +282,7 @@ func handleIssueCommentEvent(i *gitee.NoteEvent) {
 	if *(i.Action) != "comment" {
 		return
 	}
+	fmt.Println("handleIssueCommentEvent")
 	assignee := ""
 	labelsToAddStr := ""
 	org := i.Repository.Namespace
@@ -294,7 +305,7 @@ func handleIssueCommentEvent(i *gitee.NoteEvent) {
 		nameStr := o.Name
 		labelStrs = append(labelStrs, nameStr)
 	}
-	if name != "mindspore-dx-bot" {
+	if name != "test-bot" {
 		c := gitee_utils.NewClient(getToken)
 		labelMatches := labelRegex.FindAllStringSubmatch(noteBody, -1)
 		if len(labelMatches) == 0 {
@@ -395,7 +406,7 @@ func handlePRCommentEvent(i *gitee.NoteEvent) {
 	repo := i.Repository.Name
 	name := i.Comment.User.Name
 	noteBody := i.Comment.Body
-	if name != "mindspore-dx-bot" {
+	if name != "test-bot" {
 		c := gitee_utils.NewClient(getToken)
 		var labelsToAdd []string
 		labelMatches := labelRegex.FindAllStringSubmatch(noteBody, -1)
