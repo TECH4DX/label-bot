@@ -57,11 +57,17 @@ func getToken() []byte {
 }
 
 func ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "Version: 0.55 \n")
-	eventType, _, payload, ok, _ := gitee_utils.ValidateWebhook(w, r)
-	if !ok {
+	defer r.Body.Close()
+	payload, err := ioutil.ReadAll(r.Body)
+	if err != nil {
 		return
 	}
+
+	// fmt.Println(string(payload))
+
+	eventType := r.Header.Get("event_type")
+
+	var resp []string
 
 	switch eventType {
 	case "Issue Hook":
@@ -72,13 +78,15 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := checkRepository(payload, ie.Repository); err != nil {
 			return
 		}
-		go handleIssueEvent(&ie)
+		resp = handleIssueEvent(&ie)
+		responseJson(w, resp)
 	case "Note Hook":
 		var ic gitee.NoteEvent
 		if err := json.Unmarshal(payload, &ic); err != nil {
 			return
 		}
-		go handleCommentEvent(&ic)
+		resp = handleCommentEvent(&ic)
+		responseJson(w, resp)
 	//case "Merge Request Hook":
 	//var ip gitee.PullRequestEvent
 	//if err := json.Unmarshal(payload, &ip); err != nil {
@@ -87,12 +95,14 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	//go handlePullRequestEvent(&ip)
 	default:
 		return
+
 	}
 }
 
-func handleIssueEvent(i *gitee.IssueEvent) {
+func handleIssueEvent(i *gitee.IssueEvent) []string {
+	var resp []string
 	if *(i.Action) != "open" {
-		return
+		return resp
 	}
 	assignee := ""
 	strLabels := ""
@@ -118,11 +128,7 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 	c := gitee_utils.NewClient(getToken)
 
 	if len(issueInit) == 0 {
-		res := c.CreateGiteeIssueComment(org, repo, issueNum, issueTemp)
-		if res != nil {
-			fmt.Println(res.Error())
-			return
-		}
+		resp = append(resp, issueTemp)
 		var labelsToAdd []string
 
 		labelMatches := labelRegex.FindAllStringSubmatch(issueBody, -1)
@@ -180,7 +186,7 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 		rese := c.AssignGiteeIssue(org, repo, labelsToAdd_str, issueNum, assignee)
 		if rese != nil {
 			fmt.Println(rese.Error())
-			return
+			return resp
 		}
 
 		issueBody = strings.Replace(issueBody, " ", "", -1)
@@ -237,19 +243,11 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 
 			helloWord = strings.Replace(helloWord, "{"+"label"+"}", fmt.Sprintf("%v", strLabels), -1)
 
-			resLabel := c.CreateGiteeIssueComment(org, repo, issueNum, helloWord)
-			if resLabel != nil {
-				fmt.Println(resLabel.Error())
-				return
-			}
+			resp = append(resp, helloWord)
 		}
 	} else {
 
-		res := c.CreateGiteeIssueComment(org, repo, issueNum, issueTemp)
-		if res != nil {
-			fmt.Println(res.Error())
-			return
-		}
+		resp = append(resp, issueTemp)
 
 		var labelFindTemp []string
 		for _, label := range issueInit {
@@ -265,7 +263,7 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 			rese := c.AssignGiteeIssue(org, repo, "", issueNum, assignee)
 			if rese != nil {
 				fmt.Println(rese.Error())
-				return
+				return nil
 			}
 		} else {
 			assignTemp := string(assignComment[:])
@@ -277,11 +275,8 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 				} else {
 					assignTemp = strings.Replace(assignTemp, "@{"+"assignee"+"}", fmt.Sprintf("%v", "自己"), -1)
 				}
-				rs := c.CreateGiteeIssueComment(org, repo, issueNum, assignTemp)
-				if rs != nil {
-					fmt.Println(res.Error())
-					return
-				}
+
+				resp = append(resp, assignTemp)
 			}
 		}
 
@@ -292,29 +287,31 @@ func handleIssueEvent(i *gitee.IssueEvent) {
 				assigneeStr = ""
 			}
 			Temp := "hello, @" + issueMaker + assigneeStr + " " + decisionTemp + "\n"
-			res := c.CreateGiteeIssueComment(org, repo, issueNum, Temp)
-			if res != nil {
-				fmt.Println(res.Error())
-				return
-			}
+
+			resp = append(resp, Temp)
 		}
 	}
+	return resp
 }
 
-func handleCommentEvent(i *gitee.NoteEvent) {
+func handleCommentEvent(i *gitee.NoteEvent) []string {
 	switch *(i.NoteableType) {
 	case "Issue":
-		go handleIssueCommentEvent(i)
+		// go handleIssueCommentEvent(i)
+		var resp []string = handleIssueCommentEvent(i)
+		return resp
 	//case "PullRequest":
 	//	go handlePRCommentEvent(i)
 	default:
-		return
+		return nil
 	}
 }
 
-func handleIssueCommentEvent(i *gitee.NoteEvent) {
+func handleIssueCommentEvent(i *gitee.NoteEvent) []string {
+	var resp []string
+
 	if *(i.Action) != "comment" {
-		return
+		return resp
 	}
 	assignee := ""
 	labelsToAddStr := ""
@@ -340,18 +337,15 @@ func handleIssueCommentEvent(i *gitee.NoteEvent) {
 		c := gitee_utils.NewClient(getToken)
 		labelMatches := labelRegex.FindAllStringSubmatch(noteBody, -1)
 		if len(labelMatches) == 0 {
-			return
+			return nil
 		}
 		var labelsToAdd []string
 		labelsToAdd = getLabelsFromREMatches(labelMatches)
 
 		if strings.Contains(noteBody, "good-first-issue") {
 			astr := "如果您是第一次贡献社区，可以参考我们的贡献指南：https://www.openeuler.org/zh/community/contribution/"
-			res := c.CreateGiteeIssueComment(org, repo, issueNum, astr)
-			if res != nil {
-				fmt.Println(res.Error())
-				return
-			}
+
+			resp = append(resp, astr)
 		}
 
 		if len(labelStrs) != 0 {
@@ -372,20 +366,18 @@ func handleIssueCommentEvent(i *gitee.NoteEvent) {
 		rese := c.AssignGiteeIssue(org, repo, labelsToAddStr, issueNum, assignee)
 		if rese != nil {
 			fmt.Println(rese.Error())
-			return
+			return nil
 		}
 
 		for _, label := range labelsToAdd {
 			if label == "kind/decision" {
 				Temp := "hello, @" + issueMaker + assigneeStr + " " + decisionTemp + "\n"
-				res := c.CreateGiteeIssueComment(org, repo, issueNum, Temp)
-				if res != nil {
-					fmt.Println(res.Error())
-					return
-				}
+
+				resp = append(resp, Temp)
 			}
 		}
 	}
+	return resp
 }
 
 func handlePRCommentEvent(i *gitee.NoteEvent) {
@@ -524,6 +516,21 @@ func getRecommendation(c gitee_utils.Client, labels []string) string {
 	return participants
 }
 
+func responseJson(w http.ResponseWriter, resp []string) {
+	resp_map := make(map[int]string)
+	for i, content := range resp {
+		resp_map[i] = content
+	}
+	resp_json, err := json.Marshal(resp_map)
+	if err != nil {
+		fmt.Println("json.Marshal failed:", err)
+		return
+	}
+	w.Header().Set("content-type", "text/json")
+	w.WriteHeader(200)
+	w.Write(resp_json)
+}
+
 func loadFile(path, fileType string) error {
 	jsonFile, err := os.Open(path)
 	if err != nil {
@@ -557,14 +564,14 @@ func loadFile(path, fileType string) error {
 }
 
 func configFile() {
-	loadFile("src/data/mentor.json", "json")
-	loadFile("src/data/issueComTemplate.md", "issue")
-	loadFile("src/data/decisionTemplate.md", "decision")
-	loadFile("src/data/prComTemplate.md", "pr")
-	loadFile("src/data/partiTemplate.md", "parti")
-	loadFile("src/data/partiTemplate_ai.md", "partiAI")
-	loadFile("src/data/token.md", "token")
-	loadFile("src/data/assignTemplate.md", "assign")
+	loadFile("../src/data/mentor.json", "json")
+	loadFile("../src/data/issueComTemplate.md", "issue")
+	loadFile("../src/data/decisionTemplate.md", "decision")
+	loadFile("../src/data/prComTemplate.md", "pr")
+	loadFile("../src/data/partiTemplate.md", "parti")
+	loadFile("../src/data/partiTemplate_ai.md", "partiAI")
+	loadFile("../src/data/token.md", "token")
+	loadFile("../src/data/assignTemplate.md", "assign")
 }
 
 func main() {
